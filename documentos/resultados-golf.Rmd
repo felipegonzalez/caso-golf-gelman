@@ -259,9 +259,15 @@ ajustes_ensemble <-
 Vemos que algunas corridas tuvieron errores:
 
 ```{r}
-map(ajustes_ensemble$diagnosticos, "stdout") %>% str_detect("no problems detected") %>% all()
+map(ajustes_ensemble$diagnosticos, "stdout") %>% str_detect("no problems detected") %>% sum()
 ```
 
+En una corrida tuvimos divergencias:
+
+```{r}
+filter(ajustes_ensemble, !str_detect(diagnosticos, "no problems")) %>% 
+  pull(diagnosticos)
+```
 
 
 ### Calibración inferencial
