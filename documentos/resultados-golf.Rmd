@@ -279,4 +279,79 @@ La distribución del ranking de las simulaciones con relación a cada parámetro
 simulado es cercana a la uniforme.
 
 
+### Ajuste a las observaciones
+
+Una vez que pasamos las pruebas anteriores, podemos ajustar a los datos
+observados reales, que son:
+  
+```{r}
+datos <- read_delim("../datos/golf.csv", delim = " ")
+datos <- datos %>% mutate(x = round(39.37  * x, 0))
+datos
+```
+
+Usamos los datos observados y los datos para las iniciales que probamos:
+  
+```{r}
+parametros
+datos_golf <- c(list(p = nrow(datos), x = as.integer(datos$x), 
+                     n = as.integer(datos$n), 
+                     exitos_obs = datos$y),
+                parametros)
+```
+Ajustamos:
+  
+```{r}
+ajuste <- modelo$sample(data = datos_golf, 
+                        seed = 22103,
+                        iter_sampling = 4000, iter_warmup = 2000,
+                        refresh = 500, show_messages = FALSE)
+ajuste$cmdstan_diagnose()
+```
+
+No tuvimos problemas en el ajuste. El resumen que4da:
+  
+```{r}
+ajuste$summary()
+```
+
+
+# Verificación posterior dentro de muestra
+
+Ahora podemos hacer la verificación más básica, que compara el ajustado
+con los valores reales. Esto nos indica problemas potenciales de desajuste que
+requieren reevaluar nuestro modelo. Estas verificaciones también se pueden
+hacer *fuera de la muestra* (predictivas), lo cual es más apropiado en algunos
+contextos (por ejemplo, si el propósito principal es predecir).
+
+Tenemos una sección para generar tasas de éxito simuladas (nuestro
+                                                           resumen principal) a 
+partir del modelo ajustado:
+  
+```{bash}
+sed -n '/^generated/,/\}/p' ../stan/modelo.stan
+```
+
+
+
+
+```{r}
+pred_check_tbl <- calcular_post_check(ajuste, datos)
+g_post <- ggplot(pred_check_tbl, aes(x= factor(x))) +
+  geom_linerange(aes(ymin = q_05, ymax = q_95)) +
+  geom_point(aes(y = y/n), colour="red", size = 2) +
+  ylim(c(0,1)) + xlab("Distancia (cm)") + ylab("Tasa de éxito")
+g_post 
+```
+El resultado de calibración con posterior es **aceptable**, pero 
+tenemos cierta sobrepredicción para tiros largos, lo que indica que nuestro
+modelo simple no captura mecanismos que hacen los tiros largos más difíciles:
+ya sea porque hay más desviación en el ángulo (no es uniforme), o porque otros
+factores como la potencia del tiro intervienen.
+
+### Ideas para siguiente iteración
+
+- Considerar condiciones de éxito para la potencia del tiro.
+- Permitir que la desviación aumente conforme la distancia aumenta (?)
+
 
