@@ -15,6 +15,7 @@ documento de Michael Betancourt @BetancourtCase.
 library(cmdstanr)
 library(posterior)
 library(tidyverse)
+source("../R/simular_resumenes.R")
 ```
 
 ## Problema
@@ -68,30 +69,105 @@ Para completar el modelo es necesario poner distribuciones iniciales a los pará
 $\beta$. Como $\beta_0$ es la tasa de éxito a distancias muy cortas, $\beta_0$ debe ser
 relativamente grande. Ponemos por ejemplo
 
-$\beta_0 \sim N(8, 1),$
+$\beta_0 \sim N(6, 1),$
 
 de forma que a distancia cercana a cero, la probabilidad de éxito está entre
 
 ```{r}
 inv_logit <- function(z) 1 / (1 + exp(-z))
-c(inv_logit(6), inv_logit(10))
+c(inv_logit(4), inv_logit(8))
 ```
 
 Para $\beta$ es necesario tener alguna información adicional acerca del problema.
 Por ejemplo, para 5 metros esperamos que haya una cantidad considerable de fallas, 
 pero también varios éxitos. La probabilidad de éxito a 500 metros (con $\beta_0=6$)es
 
-$$p(500) = \frac{1}{1 + e^{-8 - 500 \beta}}$$
+$$p(500) = \frac{1}{1 + e^{-6 - 500 \beta}}$$
 Si igualamos a 0.5 y despejamos, obtenemos
 $$
-\beta = 0.016
+\beta = 0.012
 $$
 Pondremos entonces
 $$\beta\sim N(0.015, 0.0025)$$
-que nos da un rango para la probabilidad de éxito a 500 metros de
+que nos da un rango para la probabilidad de éxito a 2 y 5 metros de
 ```{r}
-c(inv_logit(8 - 0.01*500), inv_logit(8 - 0.02*500))
+c(inv_logit(8 - 0.010*200), inv_logit(4 - 0.020*200))
+c(inv_logit(8 - 0.010*500), inv_logit(4 - 0.020*500))
+```
+
+Estos parámetros son datos adicionales para el modelo, así que los
+agregamos:
+
+
+
+### Simular ensamble bayesiano
+
+## Simular el ensemble bayesiano
+
+Ahora simulamos el ensamble bayesiano. Escogemos algunas distancias
+en centímetros y un número de intentos a cada distancia. Esperamos
+encontrar menos tiros a distancias más grandes. Si este fuera un experimento
+diseñado, quizá tendríamos el número de intentos en cada distancia predefinidos.
+Aunque no es ideal, en este caso pondremos algunos números de intentos y distancias hipotéticas
+para probar nuestros modelos.
+
+```{r}
+sim_datos <- jsonlite::read_json("../datos/datos_prueba.json", simplifyVector = TRUE)
+parametros <- jsonlite::read_json("../datos/datos_inicial.json", simplifyVector = TRUE)
+print(sim_datos)
 ```
 
 
+```{r}
+sim_ensemble_datos <- c(sim_datos, parametros)
+ensemble <- simular_ensemble("../stan/simular_ensemble_modelo.stan", sim_ensemble_datos)
+```
 
+Y examinamos las siguientes probabilidades de éxito:
+
+```{r}
+exitos_tbl <- curvas_exito(ensemble, sim_ensemble_datos)
+ g_1 <- ggplot(exitos_tbl, aes(x = factor(x), y = prop_exitos)) +
+    geom_jitter(alpha = 0.1) 
+g_1
+```
+
+En este punto podemos consultar con el experto para verificar que:
+
+- Pŕacticamente no consideramos realizaciones imposibles (por ejemplo, 100% de éxito para todas las distancias, 50% de éxitos para tiros de 50 cm, etc.)
+- El espacio de realizaciones cubre apropiadamente el rango de posibilidades
+que el experto considera factible.
+
+### Ajustar al ensemble simulado
+
+Ahora probamos ajustar el modelo a las simulaciones. En este paso tenemos
+qué checar qué puede pasar incluso con las condiciones más extremas 
+que creemos que podemos encontrar. 
+
+Podemos probar con una simulación:
+
+```{r}
+num_iter <- 11
+exitos_sim <- ensemble$draws("exitos")
+betas_sim_tbl <- ensemble$draws(c("beta_0", "beta")) %>% as_draws_df()
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+datos_1 <- c(sim_ensemble_datos, list("exitos_obs" = exitos_sim[num_iter, 1, ] %>% as.numeric))
+ajuste <- ajustar_modelo("../stan/modelo.stan", datos_1)
+```
+
+```{r}
+ajuste$cmdstan_diagnose()
+```
+
+Este ajuste corrió sin problemas. ¿Recuperamos los parámetros $\beta$
+
+```{r}
+ajuste_draw <- ajuste$draws(c("beta_0", "beta")) %>% as_draws_df
+ggplot(ajuste_draw, aes(x = beta_0, y = beta)) + geom_point(alpha = 0.1) +
+  geom_point(data = betas_sim_tbl[num_iter, ], colour = "red", size = 2)
+```
+En este caso, el resultado es consistente con la simulación. Es necesario repetir esto varias
+veces para entender si estamos recuperando o no los parámetros de interés.
