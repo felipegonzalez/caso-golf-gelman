@@ -33,5 +33,10 @@ model {
 }
 
 generated quantities {
-  
+  real prob_sim[p];
+  for(i in 1:p){
+    prob_sim[i] = binomial_rng(n[i], prob_exito[i]);
+    prob_sim[i] = prob_sim[i] / n[i];
+  }
 }
+
