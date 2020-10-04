@@ -1,0 +1,97 @@
+---
+title: "Modelos para putts de golf"
+output: html_notebook
+bibliography: 
+ - "../referencias/referencias.bib"
+---
+
+
+Este caso está basado en  @GelmanNolan y @GolfCase.
+Usamos el flujo de trabajo bayesiano tomado del
+documento de Michael Betancourt @BetancourtCase.
+
+
+```{r}
+library(cmdstanr)
+library(posterior)
+library(tidyverse)
+```
+
+## Problema
+
+Queremos entender modelar la probabilidad de éxito de putts de Golf (putts: tiros
+relativamente cerca del hoyo que buscan que la pelota ruede al hoyo o muy 
+cerca de él), y cómo depende el éxito de la distancia del tiro. Quisiéramos
+inferir qué tan precisos son los profesionales en sus tiros.
+
+### Análisis conceptual
+
+Podemos pensar en cada intento que hace un golfista como una prueba independiente
+que puede resultar en éxito o fracaso. La probabilidad de éxito depende
+de la distancia, así que podríamos usar **regresión logística** con una variable
+de entrada (la distancia $x$ al hoyo).
+
+
+### Espacio de observaciones
+
+Usaremos datos de tiros de profesionales que incluyen la distancia al hoyo
+y si el tiro fue exitoso o no.
+
+El espacio de observaciones que esperamos del tipo $(x, y)$ donde $x$ es la
+distancia del putt y $y$ indica si se logró o no. Probablemente tendremos
+los datos agregados: para cada distancia aproximada $x$ tendremos un conteo
+de intentos y éxitos sobre los tiros de los jugadores profesionales.
+
+```{bash}
+sed -n '/^data/,/\}/p' ../stan/modelo.stan
+```
+
+### Estadísticas resumen
+
+Consideraremos el porcentaje de éxitos para cada distancia dada en las observaciones
+(cada cubeta de distancias) como resumen principal de interés. 
+
+```{bash}
+sed -n '/^transformed/,/\}/p' ../stan/modelo.stan
+```
+
+### Desarrollo del modelo
+
+Consideraremos que las observaciones del número de éxitos $e(x)$ a una 
+distancia de $x$ metros es
+
+$$e(x) \sim \textrm{Binom}(n(x), p(x))$$
+y ponemos, según regresión logística:
+
+$$\log \left (\frac{p(x)}{1 -p(x)} \right ) = \beta_0 - \beta x.$$
+Para completar el modelo es necesario poner distribuciones iniciales a los parámetros
+$\beta$. Como $\beta_0$ es la tasa de éxito a distancias muy cortas, $\beta_0$ debe ser
+relativamente grande. Ponemos por ejemplo
+
+$\beta_0 \sim N(8, 1),$
+
+de forma que a distancia cercana a cero, la probabilidad de éxito está entre
+
+```{r}
+inv_logit <- function(z) 1 / (1 + exp(-z))
+c(inv_logit(6), inv_logit(10))
+```
+
+Para $\beta$ es necesario tener alguna información adicional acerca del problema.
+Por ejemplo, para 5 metros esperamos que haya una cantidad considerable de fallas, 
+pero también varios éxitos. La probabilidad de éxito a 500 metros (con $\beta_0=6$)es
+
+$$p(500) = \frac{1}{1 + e^{-8 - 500 \beta}}$$
+Si igualamos a 0.5 y despejamos, obtenemos
+$$
+\beta = 0.016
+$$
+Pondremos entonces
+$$\beta\sim N(0.015, 0.0025)$$
+que nos da un rango para la probabilidad de éxito a 500 metros de
+```{r}
+c(inv_logit(8 - 0.01*500), inv_logit(8 - 0.02*500))
+```
+
+
+
