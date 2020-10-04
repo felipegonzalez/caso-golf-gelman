@@ -252,23 +252,47 @@ ajustes_ensemble <-
   map(1:100, ~ ajustar_diagnosticos(.x, 
         modelo = modelo, 
         datos = c(sim_ensemble_datos, list("exitos_obs" = exitos_sim[.x, 1, ] %>% as.numeric)),
-        params = sigma_sim_tbl[.x, ] %>% select(-.chain, -.iteration, -.draw) )) %>% 
+        params = sigma_sim_tbl[.x, ] %>% select(-.chain, -.iteration, -.draw) ), 
+        iter_warmup = 4000) %>% 
   bind_rows()
 ```
 
-Vemos que algunas corridas tuvieron errores:
+Vemos que una corrida tuvo errores:
 
 ```{r}
-map(ajustes_ensemble$diagnosticos, "stdout") %>% str_detect("no problems detected") %>% sum()
+map(ajustes_ensemble$diagnosticos, "stdout") %>% str_detect("no problems detected") %>% which
 ```
 
-En una corrida tuvimos divergencias:
+Vamos a diagnosticar:
 
 ```{r}
 filter(ajustes_ensemble, !str_detect(diagnosticos, "no problems")) %>% 
   pull(diagnosticos)
 ```
 
+```{r}
+num_iter <- 51
+datos_1 <- c(sim_ensemble_datos, list("exitos_obs" = exitos_sim[num_iter, 1, ] %>% as.numeric))
+ajuste <- ajustar_modelo(modelo, datos_1, iter_sampling=2000)
+```
+
+```{r}
+exitos_sim[num_iter, 1, ] %>% as.numeric()
+ajuste_draw <- ajuste$draws(c("sigma")) %>% as_draws_df
+ggplot(ajuste_draw, aes(x = sigma)) + geom_histogram() +
+  geom_vline(data = sigma_sim_tbl[num_iter, ], aes(xintercept = sigma), colour = "red",2)
+```
+```{r}
+exitos_tbl <- curvas_exito(ensemble, sim_ensemble_datos) %>% 
+  mutate(divergencia = rep == 51)
+ g_1 <- ggplot(exitos_tbl, aes(x = factor(x), y = prop_exitos)) +
+    geom_jitter(alpha = 1) +
+   geom_line(data = exitos_tbl %>% filter(divergencia), colour = "red", group = 1, size = 2)
+g_1
+```
+Y vemos que podemos tener problemas para valores muy chicos de $\sigma$. Podemos
+regresar a corregir nuestra inicial, puesto que estos valores son poco creíbles:
+la tasa de éxito se mantiene por arriba de 50% incluso para tiros de 6 metros.
 
 ### Calibración inferencial
 
