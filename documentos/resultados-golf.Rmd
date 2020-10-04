@@ -214,3 +214,40 @@ La distribución del ranking de las simulaciones con relación a cada parámetro
 simulado es cercana a la uniforme.
 
 
+### Ajuste a las observaciones
+
+Una vez que pasamos las pruebas anteriores, podemos ajustar a los datos
+observados reales, que son:
+
+```{r}
+datos <- read_delim("../datos/golf.csv", delim = " ")
+datos <- datos %>% mutate(x = round(39.37  * x, 0))
+datos
+```
+
+Usamos los datos observados y los datos para las iniciales que probamos:
+
+```{r}
+parametros
+datos_golf <- c(list(p = nrow(datos), x = as.integer(datos$x), 
+                   n = as.integer(datos$n), 
+                   exitos_obs = datos$y),
+                parametros)
+```
+Ajustamos:
+
+```{r}
+ajuste <- modelo$sample(data = datos_golf, 
+                        seed = 22103,
+                        iter_sampling = 4000, iter_warmup = 2000,
+                        refresh = 500, show_messages = FALSE)
+ajuste$cmdstan_diagnose()
+```
+
+No tuvimos problemas en el ajuste. El resumen que4da:
+
+```{r}
+ajuste$summary()
+```
+
+
