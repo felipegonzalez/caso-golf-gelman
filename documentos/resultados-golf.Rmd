@@ -251,3 +251,43 @@ ajuste$summary()
 ```
 
 
+# Verificación posterior dentro de muestra
+
+Ahora podemos hacer la verificación más básica, que compara el ajustado
+con los valores reales. Esto nos indica problemas potenciales de desajuste que
+requieren reevaluar nuestro modelo. Estas verificaciones también se pueden
+hacer *fuera de la muestra* (predictivas), lo cual es más apropiado en algunos
+contextos (por ejemplo, si el propósito principal es predecir).
+
+Tenemos una sección para generar tasas de éxito simuladas (nuestro
+resumen principal) a 
+partir del modelo ajustado:
+
+```{bash}
+sed -n '/^generated/,/\}/p' ../stan/modelo.stan
+```
+
+
+
+
+```{r}
+pred_check_tbl <- calcular_post_check(ajuste, datos)
+g_post <- ggplot(pred_check_tbl, aes(x= factor(x))) +
+  geom_linerange(aes(ymin = q_05, ymax = q_95)) +
+  geom_point(aes(y = y/n), colour="red", size = 2) +
+  ylim(c(0,1)) + xlab("Distancia (cm)") + ylab("Tasa de éxito")
+g_post 
+```
+El resultado es bastante malo. Tenemos sobrepredicción para tiros cortos y subpredicciones
+para tiros largos. En este punto, podríamos agregar variables derivadas (por ejemplo *splines*
+o términos polinomiales) para corregir este desajuste. Este camino es factible, pero
+muchas veces se puede resolver analizando particularidades de nuestro problema,
+e introduciendo variables interpretables que nos permitan aprender del fenómeno
+que estamos modelando.
+
+### Ideas para siguiente iteración
+
+- Usar splines en la distancia para hacer más flexible el ajuste
+- Regresar al análisis conceptual y usar la geometría del problema
+
+
