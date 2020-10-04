@@ -6,6 +6,8 @@ data {
   int x[p]; // Distancia para cubeta
   int n[p]; // Número de intentos en cada cubeta
   int exitos_obs[p]; // Número de exitos en cada cubeta
+  real beta_0_pars[2];
+  real beta_pars[2];
 }
 
 parameters {
@@ -16,17 +18,18 @@ parameters {
 transformed parameters {
   real<lower=0, upper=1> prob_exito[p];
   for(i in 1:p) {
-   prob_exito[p] = inv_logit(beta_0 + beta * x[p]); 
+   prob_exito[i] = inv_logit(beta_0 - beta * x[i]); 
   }
 }
 
 model {
   //iniciales
-  beta_0 ~ normal(8, 1);
+  beta_0 ~ normal(beta_0_pars[1], beta_0_pars[2]);
+  beta ~ normal(beta_pars[1], beta_pars[2]);
   beta ~ normal(0.015, 0.0025);
   //observaciones
   for(i in 1:p){
-    exitos_obs[p] ~ binomial(n[p], prob_exito[p]);
+    exitos_obs[i] ~ binomial(n[i], prob_exito[i]);
   }
 }
 
