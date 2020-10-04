@@ -152,8 +152,8 @@ esté entre 0.1 grados y 3 grados de desviación
 
 ```{r, fig.width=4, fig.height=2.5}
 set.seed(11882)
-qplot((180 / pi) * rgamma(5000, 10, 500))
-qgamma(c(0.01, 0.99), 10, 500) * (180/pi)
+qplot((180 / pi) * rgamma(5000, 15, 500))
+qgamma(c(0.01, 0.99), 15, 500) * (180/pi)
 ```
 
 
@@ -257,42 +257,12 @@ ajustes_ensemble <-
   bind_rows()
 ```
 
-Vemos que una corrida tuvo errores:
+No tuvimos problemas numéricos ni de convergencia:
 
 ```{r}
-map(ajustes_ensemble$diagnosticos, "stdout") %>% str_detect("no problems detected") %>% which
+map(ajustes_ensemble$diagnosticos, "stdout") %>% str_detect("no problems detected") %>% all()
 ```
 
-Vamos a diagnosticar:
-
-```{r}
-filter(ajustes_ensemble, !str_detect(diagnosticos, "no problems")) %>% 
-  pull(diagnosticos)
-```
-
-```{r}
-num_iter <- 51
-datos_1 <- c(sim_ensemble_datos, list("exitos_obs" = exitos_sim[num_iter, 1, ] %>% as.numeric))
-ajuste <- ajustar_modelo(modelo, datos_1, iter_sampling=2000)
-```
-
-```{r}
-exitos_sim[num_iter, 1, ] %>% as.numeric()
-ajuste_draw <- ajuste$draws(c("sigma")) %>% as_draws_df
-ggplot(ajuste_draw, aes(x = sigma)) + geom_histogram() +
-  geom_vline(data = sigma_sim_tbl[num_iter, ], aes(xintercept = sigma), colour = "red",2)
-```
-```{r}
-exitos_tbl <- curvas_exito(ensemble, sim_ensemble_datos) %>% 
-  mutate(divergencia = rep == 51)
- g_1 <- ggplot(exitos_tbl, aes(x = factor(x), y = prop_exitos)) +
-    geom_jitter(alpha = 1) +
-   geom_line(data = exitos_tbl %>% filter(divergencia), colour = "red", group = 1, size = 2)
-g_1
-```
-Y vemos que podemos tener problemas para valores muy chicos de $\sigma$. Podemos
-regresar a corregir nuestra inicial, puesto que estos valores son poco creíbles:
-la tasa de éxito se mantiene por arriba de 50% incluso para tiros de 6 metros.
 
 ### Calibración inferencial
 
@@ -306,5 +276,7 @@ ggplot(sbc_rank_sim, aes(sample = sigma)) +
 ```
 
 La distribución del ranking de las simulaciones con relación a cada parámetro
-simulado es cercana a la uniforme, pero existen algunas desviaciones.
+simulado es cercana a la uniforme.
+
+
 
