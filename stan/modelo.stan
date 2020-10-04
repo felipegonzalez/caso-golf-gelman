@@ -26,7 +26,6 @@ model {
   //iniciales
   beta_0 ~ normal(beta_0_pars[1], beta_0_pars[2]);
   beta ~ normal(beta_pars[1], beta_pars[2]);
-  beta ~ normal(0.015, 0.0025);
   //observaciones
   for(i in 1:p){
     exitos_obs[i] ~ binomial(n[i], prob_exito[i]);
