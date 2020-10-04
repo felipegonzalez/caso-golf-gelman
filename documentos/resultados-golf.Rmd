@@ -102,8 +102,6 @@ agregamos:
 
 ### Simular ensamble bayesiano
 
-## Simular el ensemble bayesiano
-
 Ahora simulamos el ensamble bayesiano. Escogemos algunas distancias
 en centímetros y un número de intentos a cada distancia. Esperamos
 encontrar menos tiros a distancias más grandes. Si este fuera un experimento
@@ -120,7 +118,9 @@ print(sim_datos)
 
 ```{r}
 sim_ensemble_datos <- c(sim_datos, parametros)
-ensemble <- simular_ensemble("../stan/simular_ensemble_modelo.stan", sim_ensemble_datos)
+ruta <- file.path("../stan/simular_ensemble_modelo.stan")
+modelo_inicial <- cmdstan_model(ruta)
+ensemble <- simular_ensemble(modelo_inicial, sim_ensemble_datos)
 ```
 
 Y examinamos las siguientes probabilidades de éxito:
@@ -153,16 +153,22 @@ betas_sim_tbl <- ensemble$draws(c("beta_0", "beta")) %>% as_draws_df()
 ```
 
 
+```{r}
+ruta <- file.path("../stan/modelo.stan")
+modelo <- cmdstan_model(ruta)
+```
+
+
 ```{r, message=FALSE, warning=FALSE}
 datos_1 <- c(sim_ensemble_datos, list("exitos_obs" = exitos_sim[num_iter, 1, ] %>% as.numeric))
-ajuste <- ajustar_modelo("../stan/modelo.stan", datos_1)
+ajuste <- ajustar_modelo(modelo, datos_1, iter_sampling=2000)
 ```
 
 ```{r}
 ajuste$cmdstan_diagnose()
 ```
 
-Este ajuste corrió sin problemas. ¿Recuperamos los parámetros $\beta$
+Este ajuste corrió sin problemas. Recuperamos los parámetros $\beta$ para esta simulación:
 
 ```{r}
 ajuste_draw <- ajuste$draws(c("beta_0", "beta")) %>% as_draws_df
@@ -171,3 +177,40 @@ ggplot(ajuste_draw, aes(x = beta_0, y = beta)) + geom_point(alpha = 0.1) +
 ```
 En este caso, el resultado es consistente con la simulación. Es necesario repetir esto varias
 veces para entender si estamos recuperando o no los parámetros de interés.
+
+### Calibración algorítmica
+
+Ahora veremos si el algoritmo corre sin problemas numéricos con los supuestos
+del ensamble inicial. Es necesario repetir con muchas simulaciones, para
+entender si algunas configuraciones pueden tener dificultades numéricas.
+
+```{r, warning = FALSE, message = FALSE, include = FALSE}
+ajustes_ensemble <- 
+  map(1:100, ~ ajustar_diagnosticos(.x, 
+        modelo = modelo, 
+        datos = c(sim_ensemble_datos, list("exitos_obs" = exitos_sim[.x, 1, ] %>% as.numeric)),
+        params = betas_sim_tbl[.x, ] %>% select(-.chain, -.iteration, -.draw) )) %>% 
+  bind_rows()
+```
+
+Vemos que todas las corridas no reportaron problemas numéricos o de convergencia:
+
+```{r}
+map(ajustes_ensemble$diagnosticos, "stdout") %>% str_detect("no problems detected") %>% all()
+```
+
+### Calibración inferencial
+
+Ahora checamos que recuperamos los parámetros apropiadamente:
+
+```{r}
+sbc_rank_sim <- ajustes_ensemble %>% select(sbc_rank) %>% unnest
+ggplot(sbc_rank_sim, aes(sample = beta)) +
+  geom_qq(distribution = stats::qunif) +
+  geom_qq_line(distribution = stats::qunif)
+```
+
+La distribución del ranking de las simulaciones con relación a cada parámetro
+simulado es cercana a la uniforme.
+
+
