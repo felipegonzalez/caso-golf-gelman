@@ -59,3 +59,20 @@ curvas_exito <- function(sims, sim_data){
     mutate(prop_exitos = value / n)
   exitos_tbl
 }
+
+
+calcular_post_check <- function(ajuste, datos){
+  prob_sim_tbl <- ajuste$draws(c("prob_sim")) %>% as_draws_df() %>% 
+    mutate(rep = 1:nrow(.)) %>% 
+    pivot_longer(cols = starts_with("prob_sim")) %>% 
+    separate(name, into=c("a", "dist_num"), sep="\\[") %>% 
+    mutate(dist_num = str_sub(dist_num, 1, -2) %>% as.integer) %>% 
+    select(rep, dist_num, value)
+  pred_check_tbl <- prob_sim_tbl %>% 
+    group_by(dist_num) %>% 
+    summarise(q_05 = quantile(value, 0.025), q_95 = quantile(value, 0.975))
+  
+  datos_2 <- datos %>% mutate(dist_num = 1:nrow(.))
+  pred_check_tbl <- pred_check_tbl %>% left_join(datos_2, by = "dist_num")
+  pred_check_tbl
+}
