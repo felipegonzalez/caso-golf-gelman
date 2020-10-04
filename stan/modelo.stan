@@ -1,4 +1,9 @@
 // Modelo de regresión logística para tiros de golf
+functions {
+  real prob(real x, real sigma) {
+    return 2 * normal_cdf(atan(3.25 / x), 0, sigma) - 1;
+  }
+}
 
 data {
   // observaciones
@@ -6,26 +11,23 @@ data {
   int x[p]; // Distancia para cubeta
   int n[p]; // Número de intentos en cada cubeta
   int exitos_obs[p]; // Número de exitos en cada cubeta
-  real beta_0_pars[2];
-  real beta_pars[2];
+  real gamma_pars[2];
 }
 
 parameters {
-  real<lower=0> beta_0;
-  real<lower=0> beta;
+  real<lower=0> sigma;
 }
 
 transformed parameters {
   real<lower=0, upper=1> prob_exito[p];
   for(i in 1:p) {
-   prob_exito[i] = inv_logit(beta_0 - beta * x[i]); 
+   prob_exito[i] = prob(x[i], sigma); 
   }
 }
 
 model {
   //iniciales
-  beta_0 ~ normal(beta_0_pars[1], beta_0_pars[2]);
-  beta ~ normal(beta_pars[1], beta_pars[2]);
+  sigma ~ gamma(gamma_pars[1], gamma_pars[2]);
   //observaciones
   for(i in 1:p){
     exitos_obs[i] ~ binomial(n[i], prob_exito[i]);

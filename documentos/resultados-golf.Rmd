@@ -29,8 +29,66 @@ inferir qué tan precisos son los profesionales en sus tiros.
 
 Podemos pensar en cada intento que hace un golfista como una prueba independiente
 que puede resultar en éxito o fracaso. La probabilidad de éxito depende
-de la distancia, así que podríamos usar **regresión logística** con una variable
-de entrada (la distancia $x$ al hoyo).
+de la distancia.
+
+El diámetro de una pelota de golf y el hoyo (en centrímetos) es de
+
+```{r}
+diam_pelota <- (1.68 * 2.54) %>% round(1)
+diam_hoyo <- (4.25 * 2.54) %>% round(1)
+c(diam_pelota, diam_hoyo)
+```
+
+Supondremos por el momento que los greens de golf (áreas cerca del hoyo) 
+son perfectamente planos (lo cual no es cierto, pero refinaremos después),
+de modo que el éxito depende de tirar la pelota con un ángulo suficientemente cercano
+a cero con
+respecto a la línea que va del centro de la pelota al centro del hoyo.
+
+Supongamos que la distancia del centro de la pelota al centro del hoyo es $x$, y que 
+$\theta$ es el ángulo del tiro con respecto a la recta que va del centro de la pelota
+al centro del hoyo. El tiro es exitoso cuando
+
+$$\tan(\theta) < \frac{R - r}{2x}$$
+Por simetría, sólo consideramos $\theta$ con valores positivos (aunque puede
+ser que algunos golfistas tengan fallas asimétricas, eso lo discutimos más adelante).
+
+![Tiro de golf](imagenes/golf-put.png)
+En particular para nuestro problema, la condición de éxito es
+
+$$\tan(\theta) < \frac{3.25}{x}$$
+
+Mejores golfistas tendrán mejor control sobre $\theta > 0$, y conforme
+$x$ es más grande, la probabilidad de tener éxito baja:
+
+```{r}
+tibble(x = seq(20, 500, 1)) %>% 
+  mutate(theta = (180 / pi) * atan(3.25 / x)) %>% 
+ggplot(aes(x, theta)) + geom_point() +
+  xlab("Distancia (cm)") +
+  ylab(expression(paste("Desviación máxima ", theta))) +
+  labs(subtitle = "Desviación máxima permitida para tener éxito a distintas distancias")
+```
+
+Para nuestro modelo simplificado, la tasa de éxito dependerá de la 
+distancia al hoyo, y del ángulo de cada tiro.
+Algunas observaciones:
+
+- No sabemos si con tiros más largos la desviación aumenta (son tiros más fuertes)
+o si se mantiene constante. En principio supondremos que no existe un efecto importante
+en este sentido. 
+
+- Adicionalmente, puede ser que en tiros largos también haya fallos por distancia
+que reduzcan la probabilidad de tener éxito, aunque el ángulo sea correcto. 
+
+- Esta curva puede variar dependiendo del jugador, pero vamos a modelar el conjunto
+de tiros de profesionales. Suponemos homogeneidad que podríamos checar con
+datos desagregados por jugador. Estos datos podrían tener sobrerrepresentación
+de tiradores malos (que quizá hacen más tiros).
+
+- No estamos tomando en cuenta inclinación del *green*.
+
+
 
 
 ### Espacio de observaciones
@@ -62,43 +120,48 @@ Consideraremos que las observaciones del número de éxitos $e(x)$ a una
 distancia de $x$ metros es
 
 $$e(x) \sim \textrm{Binom}(n(x), p(x))$$
-y ponemos, según regresión logística:
+ La probabilidad de éxito depende de los ángulos
+que se observen en los tiros. Empezamos poniendo
 
-$$\log \left (\frac{p(x)}{1 -p(x)} \right ) = \beta_0 - \beta x.$$
-Para completar el modelo es necesario poner distribuciones iniciales a los parámetros
-$\beta$. Como $\beta_0$ es la tasa de éxito a distancias muy cortas, $\beta_0$ debe ser
-relativamente grande. Ponemos por ejemplo
+$$\theta \sim N^+(0,\sigma),$$
+que expresa nuestra incertidumbre acerca de la desviación promedio $\theta$ que logran
+los jugadores profesionales. La probabilidad de éxito es entonces
 
-$\beta_0 \sim N(6, 1),$
+$$p(x) = P(\tan(\theta) < 3.25/x) = P(\theta < \arctan(3.25/x))$$
+De modo que 
+$$p(x) = P \left (Z^+ <  \frac{\arctan(3.25/x)}{\sigma}\right )$$
+y entonces
 
-de forma que a distancia cercana a cero, la probabilidad de éxito está entre
+$$p(x)= 2\Phi \left(\frac{\arctan(3.25/x)}{\sigma}\right ) - 1$$
+donde $\Phi$ es la distribución acumulada de la normal estándar.
 
-```{r}
-inv_logit <- function(z) 1 / (1 + exp(-z))
-c(inv_logit(4), inv_logit(8))
+Ahora: no conocemos el valor de $\sigma$, así que tenemos que poner
+alguna información acerca de este valor para el cual no tendremos mediciones.
+En este punto es necesario consultar con algún experto.
+
+Un experto nos informa que es raro los tiradores profesionales rara vez
+exceden más de 4 grados a partir de la línea que quieren tirar, y sabemos
+que la desviación promedio no puede ser muy cercana a cero, pues siempre
+existen fallas, especialmente más allá de 1 metro de distancia. Una desviación estándar
+de los tiros debería estar entre 0.5 y 2.5, por ejemplo. Por el momento
+no consideramos que esto pueda variar en función de la distancia. Así que
+ponemos 
+$$\sigma \sim Gamma(a, b)$$
+y tenemos que establecer $a,b$ de forma la mayor parte de la probabilidad
+esté entre 0.1 grados y 3 grados de desviación
+
+```{r, fig.width=4, fig.height=2.5}
+set.seed(11882)
+qplot((180 / pi) * rgamma(5000, 10, 500))
+qgamma(c(0.01, 0.99), 10, 500) * (180/pi)
 ```
 
-Para $\beta$ es necesario tener alguna información adicional acerca del problema.
-Por ejemplo, para 5 metros esperamos que haya una cantidad considerable de fallas, 
-pero también varios éxitos. La probabilidad de éxito a 500 metros (con $\beta_0=6$)es
 
-$$p(500) = \frac{1}{1 + e^{-6 - 500 \beta}}$$
-Si igualamos a 0.5 y despejamos, obtenemos
-$$
-\beta = 0.012
-$$
-Pondremos entonces
-$$\beta\sim N(0.015, 0.0025)$$
-que nos da un rango para la probabilidad de éxito a 2 y 5 metros de
-```{r}
-c(inv_logit(8 - 0.010*200), inv_logit(4 - 0.020*200))
-c(inv_logit(8 - 0.010*500), inv_logit(4 - 0.020*500))
-```
+Hemos incluido información acerca del problema:
 
-Estos parámetros son datos adicionales para el modelo, así que los
-agregamos:
-
-
+- El modelo de las observaciones y los mecanismos subyacentes
+- Distribuciones iniciales consistentes con el conocimiento que tenemos acerca 
+del proceso.
 
 ### Simular ensamble bayesiano
 
@@ -149,7 +212,7 @@ Podemos probar con una simulación:
 ```{r}
 num_iter <- 11
 exitos_sim <- ensemble$draws("exitos")
-betas_sim_tbl <- ensemble$draws(c("beta_0", "beta")) %>% as_draws_df()
+sigma_sim_tbl <- ensemble$draws(c("sigma")) %>% as_draws_df()
 ```
 
 
@@ -171,9 +234,9 @@ ajuste$cmdstan_diagnose()
 Este ajuste corrió sin problemas. Recuperamos los parámetros $\beta$ para esta simulación:
 
 ```{r}
-ajuste_draw <- ajuste$draws(c("beta_0", "beta")) %>% as_draws_df
-ggplot(ajuste_draw, aes(x = beta_0, y = beta)) + geom_point(alpha = 0.1) +
-  geom_point(data = betas_sim_tbl[num_iter, ], colour = "red", size = 2)
+ajuste_draw <- ajuste$draws(c("sigma")) %>% as_draws_df
+ggplot(ajuste_draw, aes(x = sigma)) + geom_histogram() +
+  geom_vline(data = sigma_sim_tbl[num_iter, ], aes(xintercept = sigma), colour = "red",2)
 ```
 En este caso, el resultado es consistente con la simulación. Es necesario repetir esto varias
 veces para entender si estamos recuperando o no los parámetros de interés.
@@ -189,15 +252,17 @@ ajustes_ensemble <-
   map(1:100, ~ ajustar_diagnosticos(.x, 
         modelo = modelo, 
         datos = c(sim_ensemble_datos, list("exitos_obs" = exitos_sim[.x, 1, ] %>% as.numeric)),
-        params = betas_sim_tbl[.x, ] %>% select(-.chain, -.iteration, -.draw) )) %>% 
+        params = sigma_sim_tbl[.x, ] %>% select(-.chain, -.iteration, -.draw) )) %>% 
   bind_rows()
 ```
 
-Vemos que todas las corridas no reportaron problemas numéricos o de convergencia:
+Vemos que algunas corridas tuvieron errores:
 
 ```{r}
 map(ajustes_ensemble$diagnosticos, "stdout") %>% str_detect("no problems detected") %>% all()
 ```
+
+
 
 ### Calibración inferencial
 
@@ -205,89 +270,11 @@ Ahora checamos que recuperamos los parámetros apropiadamente:
 
 ```{r}
 sbc_rank_sim <- ajustes_ensemble %>% select(sbc_rank) %>% unnest
-ggplot(sbc_rank_sim, aes(sample = beta)) +
+ggplot(sbc_rank_sim, aes(sample = sigma)) +
   geom_qq(distribution = stats::qunif) +
   geom_qq_line(distribution = stats::qunif)
 ```
 
 La distribución del ranking de las simulaciones con relación a cada parámetro
-simulado es cercana a la uniforme.
-
-
-### Ajuste a las observaciones
-
-Una vez que pasamos las pruebas anteriores, podemos ajustar a los datos
-observados reales, que son:
-
-```{r}
-datos <- read_delim("../datos/golf.csv", delim = " ")
-datos <- datos %>% mutate(x = round(39.37  * x, 0))
-datos
-```
-
-Usamos los datos observados y los datos para las iniciales que probamos:
-
-```{r}
-parametros
-datos_golf <- c(list(p = nrow(datos), x = as.integer(datos$x), 
-                   n = as.integer(datos$n), 
-                   exitos_obs = datos$y),
-                parametros)
-```
-Ajustamos:
-
-```{r}
-ajuste <- modelo$sample(data = datos_golf, 
-                        seed = 22103,
-                        iter_sampling = 4000, iter_warmup = 2000,
-                        refresh = 500, show_messages = FALSE)
-ajuste$cmdstan_diagnose()
-```
-
-No tuvimos problemas en el ajuste. El resumen que4da:
-
-```{r}
-ajuste$summary()
-```
-
-
-# Verificación posterior dentro de muestra
-
-Ahora podemos hacer la verificación más básica, que compara el ajustado
-con los valores reales. Esto nos indica problemas potenciales de desajuste que
-requieren reevaluar nuestro modelo. Estas verificaciones también se pueden
-hacer *fuera de la muestra* (predictivas), lo cual es más apropiado en algunos
-contextos (por ejemplo, si el propósito principal es predecir).
-
-Tenemos una sección para generar tasas de éxito simuladas (nuestro
-resumen principal) a 
-partir del modelo ajustado:
-
-```{bash}
-sed -n '/^generated/,/\}/p' ../stan/modelo.stan
-```
-
-
-
-
-```{r}
-pred_check_tbl <- calcular_post_check(ajuste, datos)
-g_post <- ggplot(pred_check_tbl, aes(x= factor(x))) +
-  geom_linerange(aes(ymin = q_05, ymax = q_95)) +
-  geom_point(aes(y = y/n), colour="red", size = 2) +
-  ylim(c(0,1)) + xlab("Distancia (cm)") + ylab("Tasa de éxito")
-g_post 
-```
-El resultado es bastante malo. Tenemos sobrepredicción para tiros cortos y subpredicciones
-para tiros largos. En este punto, podríamos agregar variables derivadas (por ejemplo *splines*
-o términos polinomiales) para corregir este desajuste. Este camino es factible, pero
-muchas veces se puede resolver analizando particularidades de nuestro problema,
-e introduciendo variables interpretables que nos permitan aprender del fenómeno
-que estamos modelando.
-
-### Ideas para siguiente iteración
-
-- Usar splines en la distancia para hacer más flexible el ajuste
-- Regresar al análisis conceptual y usar la geometría del problema
-
+simulado es cercana a la uniforme, pero existen algunas desviaciones.
 
