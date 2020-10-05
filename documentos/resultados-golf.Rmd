@@ -15,6 +15,7 @@ documento de Michael Betancourt @BetancourtCase.
 library(cmdstanr)
 library(posterior)
 library(tidyverse)
+library(patchwork)
 source("../R/simular_resumenes.R")
 ```
 
@@ -189,11 +190,11 @@ no consideramos que esto pueda variar en función de la distancia. Así que
 ponemos 
 $$\sigma_A \sim Gamma(a, b)$$
 y tenemos que establecer $a,b$ de forma la mayor parte de la probabilidad
-esté entre 0.1 grados y 3 grados de desviación
+esté entre 1 grado y 4 grados de desviación
 
 ```{r, fig.width=4, fig.height=2.5}
 set.seed(11882)
-qplot((180 / pi) * rgamma(5000, 15, 500))
+qplot((180 / pi) * rgamma(5000, 25, 500))
 qgamma(c(0.01, 0.99), 15, 500) * (180/pi)
 ```
 
@@ -238,15 +239,17 @@ tibble(x = seq(10, 600, 10)) %>%
 ggplot(aes(x = x, y = prob_exito)) + geom_point()
 ```
 
+Este es un valor que parece ser demasiado grande para $\sigma_d$, pues sugiere
+que la mitad de los tiros a 6 metros tienen la potencia incorrecta.
+
 Finalmente, ponemos una distribución inicial para $\sigma_d$. Esta cantidad
 puede ser más difícil de elicitar en un experto, pero podemos hacer simulaciones
 para ver las consecuencias de nuestras decisiones. Comenzaremos poniendo
 
-$$\sigma_{dist} \sim Gamma(5, 1000)$$
+$$\sigma_{dist} \sim Gamma(5, 3000)$$
 ```{r}
-2*c(qgamma(0.01, 5, 1000), qgamma(0.99, 5, 1000)) %>% round(4)
+c(qgamma(0.01, 5, 3000), qgamma(0.99, 5, 3000)) %>% round(4)
 ```
-Es decir, que el error en este tipo de tiros va en general entre 0.2% y 2%.
 
 
 Hemos incluido información acerca del problema:
@@ -293,6 +296,9 @@ En este punto podemos consultar con el experto para verificar que:
 - El espacio de realizaciones cubre apropiadamente el rango de posibilidades
 que el experto considera factible.
 
+Nótese también que con estos supuestos estamos afirmando que la mayor parte
+de los tiros que se fallan son debidos a un ángulo incorrecto.
+
 ### Ajustar al ensemble simulado
 
 Ahora probamos ajustar el modelo a las simulaciones. En este paso tenemos
@@ -316,7 +322,7 @@ modelo <- cmdstan_model(ruta)
 
 ```{r, message=FALSE, warning=FALSE}
 datos_1 <- c(sim_ensemble_datos, list("exitos_obs" = exitos_sim[num_iter, 1, ] %>% as.numeric))
-ajuste <- ajustar_modelo(modelo, datos_1, iter_sampling=2000)
+ajuste <- ajustar_modelo(modelo, datos_1, iter_sampling=4000, iter_warmup = 4000)
 ```
 
 ```{r}
@@ -330,9 +336,184 @@ ajuste_draw <- ajuste$draws(c("sigma_dist", "sigma_ang")) %>% as_draws_df
 ggplot(ajuste_draw, aes(x = sigma_ang, y = sigma_dist)) + geom_point() +
   geom_point(data = sigma_sim_tbl[num_iter, ], colour = "red")
 ```
-Esto sucede porque hay dos maneras de ajustar los datos: los errores de ángulo
-son los más importantes, o los errores de distancia son los más importantes. 
-Nuestras información inicial no restringe adecuadamente la posterior hacia ninguna
-de estas dos posibilidades.
+No encontramos divergencias ni problemas numéricos.
 
+### Calibración algorítmica
+
+Ahora veremos si el algoritmo corre sin problemas numéricos con los supuestos
+del ensamble inicial. Es necesario repetir con muchas simulaciones, para
+entender si algunas configuraciones pueden tener dificultades numéricas.
+
+```{r, warning = FALSE, message = FALSE, include = FALSE}
+ajustes_ensemble <- 
+  map(1:100, ~ ajustar_diagnosticos(.x, 
+        modelo = modelo, 
+        datos = c(sim_ensemble_datos, list("exitos_obs" = exitos_sim[.x, 1, ] %>% as.numeric)),
+        params = sigma_sim_tbl[.x, ] %>% select(-.chain, -.iteration, -.draw) ), 
+        iter_warmup = 6000, iter_sample = 6000) %>% 
+  bind_rows()
+```
+
+En algunas corridas obtuvimos problemas numéricos:
+
+```{r}
+map(ajustes_ensemble$diagnosticos, "stdout") %>% str_detect("no problems detected") %>% 
+  table
+```
+
+
+
+Ahora checamos que recuperamos los parámetros apropiadamente:
+
+```{r}
+sbc_rank_sim <- ajustes_ensemble %>% select(sbc_rank) %>% unnest
+g_dist <- ggplot(sbc_rank_sim, aes(sample = sigma_dist)) +
+  geom_qq(distribution = stats::qunif) +
+  geom_abline() +
+  labs(subtitle = "sigma_dist")
+g_angulo <- ggplot(sbc_rank_sim, aes(sample = sigma_ang)) +
+  geom_qq(distribution = stats::qunif) +
+  geom_abline() +
+  labs(subtitle = "sigma_angulo")
+g_dist + g_angulo
+```
+
+La distribución del ranking de las simulaciones con relación a cada parámetro
+simulado es cercana a la uniforme
+
+### Calibración inferencial
+
+
+En el siguiente paso vemos las posibilidades de aprendizaje que nos da el modelo.
+En este punto, quisiéramos saber si aprendemos algo por encima de lo que ya 
+sabíamos.
+
+- Esto se mide con la **contracción**: cómo se compara la incertidumbre a priori
+con la posterior. Si la contracción es baja, el modelo está mal identificado o
+mal especificado. Comparamos las medias posteriores con el verdadero valor para diagnosticar si es solo mala identificación (estas dos medias son similares), o mal
+espcificación (están concentradas en lugares diferentes)
+
+- Cuando la contracción es alta, quiere decir que aprendemos del parámetro de
+interés. Sin embargo, si las posteriores varían mucho en dónde están concentradas
+en comparación a los verdaderos valores, esto indica sobreajuste (es variabilidad
+inducida por los datos).
+
+
+```{r}
+prior_sd_sigma <- sd(rgamma(1000, 25, 500))
+calib_inf <- ajustes_ensemble %>%
+  unnest(cols = (params)) %>% 
+  mutate(post_media_sigma = map_dbl(resumen, ~filter(.x, variable=="sigma_ang") %>% pull(mean)),
+         post_sd_sigma = map_dbl(resumen, ~ filter(.x, variable == "sigma_ang") %>% pull(sd))) %>% 
+  mutate(z_score = (post_media_sigma - sigma_ang) / post_sd_sigma) %>% 
+  mutate(contraccion = 1 - (post_sd_sigma/prior_sd_sigma)^2)
+```
+
+```{r}
+ggplot(calib_inf, aes(x = contraccion, y = z_score)) + geom_point(alpha = 0.5) +
+  xlim(c(0, 1))
+```
+
+Y obtenemos algunos resultados malos para el parámetro de distancia:
+
+```{r}
+prior_sd_sigma <- sd(rgamma(5000, 5, 3000))
+calib_inf <- ajustes_ensemble %>%
+  unnest(cols = (params)) %>% 
+  mutate(problema = map_lgl(diagnosticos, ~ !str_detect(.x$stdout, "no problems"))) %>% 
+  mutate(post_media_sigma = map_dbl(resumen, ~filter(.x, variable=="sigma_dist") %>% pull(mean)),
+         post_sd_sigma = map_dbl(resumen, ~ filter(.x, variable == "sigma_dist") %>% pull(sd))) %>% 
+  mutate(z_score = (post_media_sigma - sigma_dist) / post_sd_sigma) %>% 
+  mutate(contraccion = 1 - (post_sd_sigma/prior_sd_sigma)^2)
+```
+
+```{r}
+ggplot(calib_inf, aes(x = contraccion, y = z_score, colour = factor(problema))) +
+  geom_point(alpha = 0.5) 
+```
+Incluso quitando los valores donde hubo problemas numéricos, encontramos
+contracciones débiles (poco aprendizaje): nuestro modelo está mal identificado.
+
+```{r}
+ggplot(calib_inf %>% filter(!problema), 
+       aes(x = contraccion, y = z_score, colour = factor(problema))) +
+  geom_point(alpha = 0.5) 
+```
+
+### Ajuste a las observaciones
+
+Una vez que pasamos las pruebas anteriores, podemos ajustar a los datos
+observados reales, que son:
+  
+```{r}
+datos <- read_delim("../datos/golf.csv", delim = " ")
+datos <- datos %>% mutate(x = round(39.37  * x, 0))
+datos
+```
+
+Usamos los datos observados y los datos para las iniciales que probamos:
+  
+```{r}
+parametros
+datos_golf <- c(list(p = nrow(datos), x = as.integer(datos$x), 
+                     n = as.integer(datos$n), 
+                     exitos_obs = datos$y),
+                parametros)
+```
+Ajustamos:
+  
+```{r}
+ajuste <- modelo$sample(data = datos_golf, 
+                        seed = 22103,
+                        iter_sampling = 4000, iter_warmup = 4000,
+                        refresh = 500, show_messages = FALSE)
+ajuste$cmdstan_diagnose()
+```
+
+No tuvimos problemas en el ajuste. El resumen que4da:
+  
+```{r}
+ajuste$summary()
+```
+
+
+# Verificación posterior dentro de muestra
+
+Ahora podemos hacer la verificación más básica, que compara el ajustado
+con los valores reales. Esto nos indica problemas potenciales de desajuste que
+requieren reevaluar nuestro modelo. Estas verificaciones también se pueden
+hacer *fuera de la muestra* (predictivas), lo cual es más apropiado en algunos
+contextos (por ejemplo, si el propósito principal es predecir).
+
+Tenemos una sección para generar tasas de éxito simuladas (nuestro
+                                                           resumen principal) a 
+partir del modelo ajustado:
+  
+```{bash}
+sed -n '/^generated/,/\}/p' ../stan/modelo.stan
+```
+
+
+
+
+```{r}
+pred_check_tbl <- calcular_post_check(ajuste, datos)
+g_post <- ggplot(pred_check_tbl, aes(x= factor(x))) +
+  geom_linerange(aes(ymin = q_05, ymax = q_95)) +
+  geom_point(aes(y = y/n), colour="red", size = 2) +
+  ylim(c(0,1)) + xlab("Distancia (cm)") + ylab("Tasa de éxito")
+g_post 
+```
+El resultado de calibración con posterior es bueno, y no tuvimos problema
+en ajustar el modelo. Los problemas que encontramos arriba pueden deberse
+a que los tamaños de muestra que utilizamos son más chicos.
+
+¿Cuántos tiros son fallados por ángulo o distancia o ambos?
+
+```{r}
+
+```
+
+
+### Ideas para siguiente iteración
 
