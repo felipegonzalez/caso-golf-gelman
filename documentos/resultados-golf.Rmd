@@ -264,7 +264,6 @@ map(ajustes_ensemble$diagnosticos, "stdout") %>% str_detect("no problems detecte
 ```
 
 
-### Calibración inferencial
 
 Ahora checamos que recuperamos los parámetros apropiadamente:
 
@@ -277,6 +276,47 @@ ggplot(sbc_rank_sim, aes(sample = sigma)) +
 
 La distribución del ranking de las simulaciones con relación a cada parámetro
 simulado es cercana a la uniforme.
+
+### Calibración inferencial
+
+
+En el siguiente paso vemos las posibilidades de aprendizaje que nos da el modelo.
+En este punto, quisiéramos saber si aprendemos algo por encima de lo que ya 
+sabíamos.
+
+- Esto se mide con la **contracción**: cómo se compara la incertidumbre a priori
+con la posterior. Si la contracción es baja, el modelo está mal identificado o
+mal especificado. Comparamos las medias posteriores con el verdadero valor para diagnosticar si es solo mala identificación (estas dos medias son similares), o mal
+espcificación (están concentradas en lugares diferentes)
+
+- Cuando la contracción es alta, quiere decir que aprendemos del parámetro de
+interés. Sin embargo, si las posteriores varían mucho en dónde están concentradas
+en comparación a los verdaderos valores, esto indica sobreajuste (es variabilidad
+inducida por los datos).
+
+
+
+```{r}
+prior_sd_sigma <- sd(rgamma(1000,15, 500))
+calib_inf <- ajustes_ensemble %>%
+  unnest(cols = (params)) %>% 
+  mutate(post_media_sigma = map_dbl(resumen, ~filter(.x, variable=="sigma") %>% pull(mean)),
+         post_sd_sigma = map_dbl(resumen, ~ filter(.x, variable == "sigma") %>% pull(sd))) %>% 
+  mutate(z_score = (post_media_sigma - sigma) / post_sd_sigma) %>% 
+  mutate(contraccion = 1 - (post_sd_sigma/prior_sd_sigma)^2)
+```
+
+```{r}
+ggplot(calib_inf, aes(x = contraccion, y = z_score)) + geom_point(alpha = 0.5) +
+  xlim(c(0, 1))
+```
+- La contracción es fuerte, de forma que es muy informativa la verosimilitud
+- Los valores z están concentrados en 0, de modo que las posteriores capturan
+la configuración del modelo.
+- Valores $z$ que consistentemente comunmente fuera del rango $[-3,3]$ por ejemplo,
+son indicaciones de sobreajuste si la concentración es alta
+
+
 
 
 ### Ajuste a las observaciones
