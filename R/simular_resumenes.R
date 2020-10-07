@@ -53,7 +53,7 @@ curvas_exito <- function(sims, sim_data){
   exitos <- sims$draws("exitos") %>% as_draws_df %>% 
     mutate(rep = 1:1000) %>% 
     pivot_longer(cols = starts_with("exitos"))
-  sim_data_tbl <- tibble(x = sim_data$x, n = sim_data$n, id = 1:7) %>% 
+  sim_data_tbl <- tibble(x = sim_data$x, n = sim_data$n, id = 1:length(sim_data$x)) %>% 
     mutate(name = paste0("exitos[", id, "]"))
   exitos_tbl <- exitos %>% left_join(sim_data_tbl) %>% 
     mutate(prop_exitos = value / n)

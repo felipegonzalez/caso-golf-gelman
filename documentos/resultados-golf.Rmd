@@ -84,12 +84,13 @@ Mejores golfistas tendrán mejor control sobre $\theta > 0$, y conforme
 $x$ es más grande, la probabilidad de tener éxito baja:
 
 ```{r}
-tibble(x = seq(20, 500, 1)) %>% 
+tibble(x = seq(10, 1500, 1)) %>% 
   mutate(theta = (180 / pi) * atan(3.25 / x)) %>% 
 ggplot(aes(x, theta)) + geom_point() +
   xlab("Distancia (cm)") +
   ylab(expression(paste("Desviación máxima ", theta))) +
-  labs(subtitle = "Desviación máxima permitida para tener éxito a distintas distancias")
+  labs(subtitle = "Desviación máxima permitida para tener éxito a distintas distancias") +
+  scale_y_log10()
 ```
 
 - Esta curva puede variar dependiendo del jugador, pero vamos a modelar el conjunto
@@ -195,7 +196,7 @@ esté entre 1 grado y 4 grados de desviación
 ```{r, fig.width=4, fig.height=2.5}
 set.seed(11882)
 qplot((180 / pi) * rgamma(5000, 25, 500))
-qgamma(c(0.01, 0.99), 15, 500) * (180/pi)
+qgamma(c(0.01, 0.99), 25, 500) * (180/pi)
 ```
 
 
@@ -234,7 +235,7 @@ Que se ve como sigue para un valor de $\sigma_{dist} = 0.005$ (1% de error)
 
 ```{r}
 sigma_dist <- 0.005
-tibble(x = seq(10, 600, 10)) %>% 
+tibble(x = seq(10, 2000, 10)) %>% 
   mutate(prob_exito = 2*pnorm(0.82 / (sigma_dist * (0.82 + 3.26*(0.131)*x))) - 1) %>% 
 ggplot(aes(x = x, y = prob_exito)) + geom_point()
 ```
@@ -447,7 +448,7 @@ observados reales, que son:
   
 ```{r}
 datos <- read_delim("../datos/golf.csv", delim = " ")
-datos <- datos %>% mutate(x = round(39.37  * x, 0))
+datos <- datos %>% mutate(x = round(30.48  * x, 0))
 datos
 ```
 
@@ -470,7 +471,7 @@ ajuste <- modelo$sample(data = datos_golf,
 ajuste$cmdstan_diagnose()
 ```
 
-No tuvimos problemas en el ajuste. El resumen que4da:
+No tuvimos problemas en el ajuste. El resumen queda:
   
 ```{r}
 ajuste$summary()
@@ -498,7 +499,7 @@ sed -n '/^generated/,/\}/p' ../stan/modelo.stan
 
 ```{r}
 pred_check_tbl <- calcular_post_check(ajuste, datos)
-g_post <- ggplot(pred_check_tbl, aes(x= factor(x))) +
+g_post <- ggplot(pred_check_tbl, aes(x= x)) +
   geom_linerange(aes(ymin = q_05, ymax = q_95)) +
   geom_point(aes(y = y/n), colour="red", size = 2) +
   ylim(c(0,1)) + xlab("Distancia (cm)") + ylab("Tasa de éxito")
@@ -508,12 +509,82 @@ El resultado de calibración con posterior es bueno, y no tuvimos problema
 en ajustar el modelo. Los problemas que encontramos arriba pueden deberse
 a que los tamaños de muestra que utilizamos son más chicos.
 
-¿Cuántos tiros son fallados por ángulo o distancia o ambos?
+## Otra fuente de datos más grande
+
+Usamos una fuente de datos con registros de más tiros (ver @GelmanNolan)
 
 ```{r}
+golf_grande <- read_delim("../datos/golf_grande.csv", delim = "\t") %>% 
+  mutate(x = dis * 30.46, y = exitos, n = count) %>% 
+  select(x, n, y) 
+```
+```{r}
+golf_grande %>% mutate(prop_exito = y / n)
+```
 
+Nótese que los tiros a 8-30 centímetros no son prácticamente éxitos. Si ajustamos
+con estos datos, considerando que hay una gran cantidad de tiros a esta distancia,
+el ajuste puede quedar dominado por estos casos.
+
+```{r}
+golf_grande <- filter(golf_grande, x > 60)
 ```
 
 
-### Ideas para siguiente iteración
+```{r}
+ruta <- file.path("../stan/modelo.stan")
+modelo <- cmdstan_model(ruta)
+```
 
+
+```{r, message=FALSE, warning=FALSE}
+parametros
+datos_golf_grande <- c(list(p = nrow(golf_grande), 
+                            x = as.integer(round(golf_grande$x, 0)), 
+                            n = as.integer(golf_grande$n), 
+                            exitos_obs = golf_grande$y),
+                parametros)
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+ajuste_grande <- modelo$sample(data = datos_golf_grande, 
+                        seed = 23,
+                        iter_sampling = 12000, iter_warmup = 8000,
+                        adapt_delta = 0.95,
+                        parallel_chains = 4,
+                        chains = 4,
+                        refresh = 2000, show_messages = FALSE)
+```
+
+
+```{r}
+ajuste_grande$cmdstan_diagnose()
+```
+
+
+```{r}
+pred_check_tbl <- calcular_post_check(ajuste_grande, golf_grande)
+g_post <- ggplot(pred_check_tbl, aes(x= x)) +
+  geom_linerange(aes(ymin = q_05, ymax = q_95)) +
+  geom_point(aes(y = y/n), colour="red", size = 2) +
+  ylim(c(0,1)) + xlab("Distancia (cm)") + ylab("Tasa de éxito") +
+  geom_point(data = datos, aes(y = y/n), colour = "blue") 
+g_post 
+```
+
+
+```{r}
+ajuste_grande$summary(c("sigma_ang", "sigma_dist"))
+```
+```{r}
+ggplot(ajuste_grande$draws(c("sigma_ang", "sigma_dist")) %>% as_draws_df(),
+       aes(x = sigma_ang, y = sigma_dist)) +
+  geom_point()
+```
+Y vemos que tenemos un problema de mala identificación. Como explicamos arriba,
+un valor de 0.01 para sigma_dist es muy grande para este problema. 
+
+## Siguientes pasos
+
+- Corregir especificación de modelo.
